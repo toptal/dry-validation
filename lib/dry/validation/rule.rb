@@ -35,9 +35,15 @@ module Dry
       #
       # @api private
       def call(contract, result)
+        block = if true || keys.join.include?('[]')
+                  evaluated_block
+                else
+                  @block
+                end
+
         Evaluator.new(
           contract,
-          keys: keys,
+          keys: [],
           macros: macros,
           block_options: block_options,
           result: result,
@@ -45,6 +51,46 @@ module Dry
           _context: result.context,
           &block
         )
+      end
+
+      def evaluated_block
+        macros = parse_macros(*@macros)
+        real_block = @block
+        real_keys = @each_each ? [*@each_each, :[]] : keys
+
+        @evaluated_block ||= proc do
+          @real_keys = real_keys
+          keys = real_keys
+                   .flat_map { |k| Schema::Path[k].keys }
+                   .map(&:to_s)
+                   .flat_map { |k| k.end_with?('[]') ? [k[0..-3], '[]'] : k }
+                   .map(&:to_sym)
+                   .reject(&:empty?)
+
+          xx = keys.reduce([[]]) do |paths, key|
+            paths.reduce([]) do |memo, current_path|
+              if key == :'[]'
+                next memo unless result[current_path].is_a?(Array)
+
+                memo.concat(Array.new(result[current_path].size) { |idx| [*current_path, idx] })
+              else
+                memo << [*current_path, key]
+              end
+
+              memo
+            end
+          end
+          xx.each do |*base_path, idx|
+
+            path = [*base_path, idx]
+
+            next if result.schema_error?(path)
+
+            evaluator = with(macros: macros, keys: [path], index: idx, &real_block)
+
+            failures.concat(evaluator.failures)
+          end
+        end
       end
 
       # Define which macros should be executed
@@ -79,23 +125,11 @@ module Dry
       #
       # rubocop:disable Metrics/AbcSize
       def each(*macros, &block)
-        root = keys[0]
-        macros = parse_macros(*macros)
+        @macros = parse_macros(*macros)
+        @each_each = @keys
         @keys = []
 
-        @block = proc do
-          unless result.base_error?(root) || !values.key?(root) || values[root].nil?
-            values[root].each_with_index do |_, idx|
-              path = [*Schema::Path[root].to_a, idx]
-
-              next if result.schema_error?(path)
-
-              evaluator = with(macros: macros, keys: [path], index: idx, &block)
-
-              failures.concat(evaluator.failures)
-            end
-          end
-        end
+        @block = block
 
         @block_options = map_keywords(block) if block
 
