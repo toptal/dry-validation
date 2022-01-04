@@ -77,6 +77,8 @@ module Dry
           instance_exec(**exec_opts, &block)
         end
 
+        return if keys.none?
+
         macros.each do |args|
           macro = macro(*args.flatten(1))
           instance_exec(**macro.extract_block_options(_options.merge(macro: macro)), &macro.block)
@@ -131,6 +133,10 @@ module Dry
       # @api public
       def key_name
         @key_name ||= keys.first
+      end
+
+      def values
+        result.values
       end
 
       # Return the value found under the first specified key
